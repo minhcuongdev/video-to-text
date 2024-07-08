@@ -1,0 +1,4 @@
+fastapi
+uvicorn
+openai-whisper
+numpy==1.26.4
