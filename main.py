@@ -1,5 +1,6 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query
 from fastapi.responses import JSONResponse
+from bs4 import BeautifulSoup
 import os
 import whisper
 import datetime
@@ -23,30 +24,42 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 model = whisper.load_model("medium")
 
 @app.post("/transcribe/")
-async def upload_video(
-    # file: UploadFile = File(...), 
+async def transcribe_video( 
     video_url:str,
     language: str = Query(None, description="Language of the video (optional)")
 ):
     try:
+        # Send a request to the TikTok video URL
         response = requests.get(video_url)
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
         raise HTTPException(status_code=400, detail=f"Error downloading video: {e}")
 
-    # # Check file type
-    # if not file.filename.endswith(('.mp4', '.mov', '.avi', '.mkv')):
-    #     raise HTTPException(status_code=400, detail="Invalid file format")
+    # Parse the HTML content using BeautifulSoup
+    soup = BeautifulSoup(response.content, 'html.parser')
 
-    # file_path = os.path.join(UPLOAD_DIR, file.filename)
+    # Find the video tag
+    video_tag = soup.find('video')
+
+    print(video_tag)
+
+    if not video_tag:
+        raise HTTPException(status_code=400, detail="No video found at the specified URL")
+
+    # Extract the video URL
+    video_url = video_tag['src']
+
+    # Download the video
+    video_response = requests.get(video_url, stream=True)
+    video_response.raise_for_status()
 
     # Save the video to a temporary file
     file_path = os.path.join(UPLOAD_DIR, uuid.uuid4())
 
-    # Save the uploaded file
-    with open(file_path, "wb") as f:
-        # content = await file.read()
-        f.write(response.content)
+    # Save the video to the specified path
+    with open(file_path, 'wb') as file:
+        for chunk in video_response.iter_content(chunk_size=8192):
+            file.write(chunk)
 
     # Transcribe the video using Whisper
     transcription = transcribe_video(file_path, language)
@@ -58,6 +71,34 @@ async def upload_video(
         return JSONResponse(content={"error": f"Failed to delete file: {str(e)}"}, status_code=500)
 
     return JSONResponse(content={"transcription": transcription}, status_code=201)
+
+@app.post("/upload-video/")
+async def upload_video(
+    file: UploadFile = File(...), 
+    language: str = Query(None, description="Language of the video (optional)")
+):
+    
+    # # Check file type
+    if not file.filename.endswith(('.mp4', '.mov', '.avi', '.mkv')):
+        raise HTTPException(status_code=400, detail="Invalid file format")
+
+    file_path = os.path.join(UPLOAD_DIR, file.filename)
+
+    # Save the uploaded file
+    with open(file_path, "wb") as f:
+        content = await file.read()
+        f.write(content)
+
+    # Transcribe the video using Whisper
+    transcription = transcribe_video(file_path, language)
+
+    # Delete the video file after transcription
+    try:
+        os.remove(file_path)
+    except Exception as e:
+        return JSONResponse(content={"error": f"Failed to delete file: {str(e)}"}, status_code=500)
+
+    return JSONResponse(content={"filename": file.filename,"transcription": transcription}, status_code=201)
 
 def transcribe_video(file_path: str, language: str = 'vi') -> str:
     # Use Whisper to transcribe the video        

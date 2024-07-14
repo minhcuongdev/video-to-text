@@ -1,4 +1,7 @@
 fastapi
 uvicorn
 openai-whisper
+requests
+uuid
+bs4
 numpy==1.26.4
